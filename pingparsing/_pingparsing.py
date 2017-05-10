@@ -6,8 +6,8 @@
 
 from __future__ import absolute_import
 
-import re
-
+import re, logging
+import platform
 import typepy
 import pyparsing as pp
 
@@ -145,13 +145,16 @@ class PingParsing(object):
         if typepy.is_null_string(ping_message):
             return
 
-        try:
-            self.__parse_linux_ping(ping_message)
-            return
-        except PingStaticticsHeaderNotFoundError:
-            pass
-
-        self.__parse_windows_ping(ping_message)
+        ostype = platform.system()
+        if ostype == 'Linux':
+           self.__parse_linux_ping(ping_message)
+        elif ostype == 'Windows':
+           self.__parse_windows_ping(ping_message)
+        elif ostype == 'Darwin':
+           self.__parse_osx_ping(ping_message)
+        else:
+          logging.warn("Platform %s may not be supported at this time" % ostype)
+          raise PingStaticticsHeaderNotFoundError("Operating System not supported: %s" %ostype)
 
     def __find_ststs_head_line_idx(self, line_list, re_stats_header):
         for i, line in enumerate(line_list):
@@ -212,6 +215,57 @@ class PingParsing(object):
         self.__rtt_min = float(parse_list[1])
         self.__rtt_avg = float(parse_list[5])
         self.__rtt_max = float(parse_list[3])
+
+    def __parse_osx_ping(self, ping_message):
+        line_list = _to_unicode(ping_message).splitlines()
+        i = self.__find_ststs_head_line_idx(
+            line_list, re.compile("--- .* ping statistics ---"))
+
+        body_line_list = line_list[i + 1:]
+        self.__validate_stats_body(body_line_list)
+        logging.error(body_line_list)
+        packet_line = body_line_list[0]
+        logging.error(packet_line)
+        packet_pattern = (
+            pp.Word(pp.nums) +
+            pp.Literal("packets transmitted,") +
+            pp.Word(pp.nums) +
+            pp.Literal("packets received,") +
+            pp.SkipTo(pp.Word(pp.nums + ".%") + pp.Literal("packet loss")) +
+            pp.Word(pp.nums + ".") +
+            pp.Literal("% packet loss")
+        )
+        parse_list = packet_pattern.parseString(_to_unicode(packet_line))
+        self.__packet_transmit = int(parse_list[0])
+        self.__packet_receive = int(parse_list[2])
+        self.__packet_loss = float(parse_list[-2])
+
+        self.__duplicates = self.__parse_duplicate(packet_line)
+
+        try:
+            rtt_line = body_line_list[1]
+        except IndexError:
+            return
+        if typepy.is_null_string(rtt_line):
+            return
+
+        rtt_pattern = (
+            pp.Literal("round-trip min/avg/max/stddev =") +
+            pp.Word(pp.nums + ".") + "/" +
+            pp.Word(pp.nums + ".") + "/" +
+            pp.Word(pp.nums + ".") + "/" +
+            pp.Word(pp.nums + ".") +
+            pp.Word(pp.nums + "ms")
+        )
+        try:
+            parse_list = rtt_pattern.parseString(_to_unicode(rtt_line))
+        except pp.ParseException:
+            return
+
+        self.__rtt_min = float(parse_list[1])
+        self.__rtt_avg = float(parse_list[3])
+        self.__rtt_max = float(parse_list[5])
+        self.__rtt_mdev = float(parse_list[7])
 
     def __parse_linux_ping(self, ping_message):
         line_list = _to_unicode(ping_message).splitlines()

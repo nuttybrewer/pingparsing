@@ -4,7 +4,9 @@
 .. codeauthor:: Tsuyoshi Hombashi <gogogo.vm@gmail.com>
 """
 
+import logging
 import itertools
+from mock import patch, MagicMock
 
 from pingparsing import (
     EmptyPingStaticticsError,
@@ -73,6 +75,12 @@ PING 192.168.0.1 (192.168.0.1) 56(84) bytes of data.
 --- 192.168.0.1 ping statistics ---
 """)
 
+PING_OSX_SUCCESS = six.b("""PING 127.0.0.1 (127.0.0.1): 56 data bytes
+
+--- 127.0.0.1 ping statistics ---
+2 packets transmitted, 2 packets received, 0.0% packet loss
+round-trip min/avg/max/stddev = 0.055/0.108/0.162/0.053 ms
+""")
 
 # ping google.com -n 10:
 #   Windows 7 SP1
@@ -132,6 +140,28 @@ class Test_PingParsing_parse:
 
     @pytest.mark.parametrize(["ping_text", "expected"], [
         [
+            PING_OSX_SUCCESS,
+            {
+                "packet_transmit": 2,
+                "packet_receive": 2,
+                "packet_loss": 0.0,
+                "rtt_min": 0.055,
+                "rtt_avg": 0.108,
+                "rtt_max": 0.162,
+                "rtt_mdev": 0.053,
+                "duplicates": None,
+            }
+        ],
+    ]
+    )
+    def test_normal_text_osx(self, ping_parser, ping_text, expected):
+      with patch('platform.system', MagicMock(return_value="Darwin")):
+        ping_parser.parse(ping_text)
+        logging.error(ping_parser.as_dict())
+        assert ping_parser.as_dict() == expected
+
+    @pytest.mark.parametrize(["ping_text", "expected"], [
+        [
             PING_DEBIAN_SUCCESS,
             {
                 "packet_transmit": 60,
@@ -170,19 +200,6 @@ class Test_PingParsing_parse:
                 "duplicates": None,
             }
         ],
-        [
-            PING_WINDOWS_SUCCESS,
-            {
-                "packet_transmit": 10,
-                "packet_receive": 10,
-                "packet_loss": 0.0,
-                "rtt_min": 56,
-                "rtt_avg": 107,
-                "rtt_max": 194,
-                "rtt_mdev": None,
-                "duplicates": None,
-            }
-        ],
     ] + list(itertools.product(
         [
             PING_DEBIAN_UNREACHABLE_0,
@@ -199,7 +216,28 @@ class Test_PingParsing_parse:
             "rtt_mdev": None,
             "duplicates": None,
         }]
-    )) + list(itertools.product(
+    ))
+    )
+    def test_normal_text_linux(self, ping_parser, ping_text, expected):
+      with patch('platform.system', MagicMock(return_value="Linux")):
+        ping_parser.parse(ping_text)
+        assert ping_parser.as_dict() == expected
+
+    @pytest.mark.parametrize(["ping_text", "expected"], [
+        [
+            PING_WINDOWS_SUCCESS,
+            {
+                "packet_transmit": 10,
+                "packet_receive": 10,
+                "packet_loss": 0.0,
+                "rtt_min": 56,
+                "rtt_avg": 107,
+                "rtt_max": 194,
+                "rtt_mdev": None,
+                "duplicates": None,
+            }
+        ],
+    ] + list(itertools.product(
         [
             PING_WINDOWS_UNREACHABLE_0,
             PING_WINDOWS_UNREACHABLE_1,
@@ -217,10 +255,11 @@ class Test_PingParsing_parse:
         }]
     ))
     )
-    def test_normal_text(self, ping_parser, ping_text, expected):
+    def test_normal_text_windows(self, ping_parser, ping_text, expected):
+      with patch('platform.system', MagicMock(return_value="Windows")):
         ping_parser.parse(ping_text)
-
         assert ping_parser.as_dict() == expected
+
 
     @pytest.mark.parametrize(["pingresult", "expected"], [
         [
@@ -237,28 +276,37 @@ class Test_PingParsing_parse:
             }
         ]
     ])
-    def test_normal_pingresult(self, ping_parser, pingresult, expected):
-        ping_parser.parse(pingresult.stdout)
-
-        assert ping_parser.as_dict() == expected
+    def test_normal_pingresult_linux(self, ping_parser, pingresult, expected):
+        with patch('platform.system', MagicMock(return_value="Linux")):
+          ping_parser.parse(pingresult.stdout)
+          assert ping_parser.as_dict() == expected
 
     def test_empty(self, ping_parser, ping_text):
-        ping_parser.parse(ping_text)
-        ping_parser.parse("")
+        with patch('platform.system', MagicMock(return_value="Linux")):
+          ping_parser.parse(ping_text)
+          ping_parser.parse("")
 
-        assert ping_parser.packet_transmit is None
-        assert ping_parser.packet_receive is None
-        assert ping_parser.packet_loss is None
-        assert ping_parser.rtt_min is None
-        assert ping_parser.rtt_avg is None
-        assert ping_parser.rtt_max is None
-        assert ping_parser.rtt_mdev is None
-        assert ping_parser.duplicates is None
+          assert ping_parser.packet_transmit is None
+          assert ping_parser.packet_receive is None
+          assert ping_parser.packet_loss is None
+          assert ping_parser.rtt_min is None
+          assert ping_parser.rtt_avg is None
+          assert ping_parser.rtt_max is None
+          assert ping_parser.rtt_mdev is None
+          assert ping_parser.duplicates is None
 
     @pytest.mark.parametrize(["ping_text", "expected"], [
         [PING_FEDORA_EMPTY_BODY, EmptyPingStaticticsError],
+    ])
+    def test_linux_exception(self, ping_parser, ping_text, expected):
+        with pytest.raises(expected):
+          with patch('platform.system', MagicMock(return_value="Linux")):
+            ping_parser.parse(ping_text)
+
+    @pytest.mark.parametrize(["ping_text", "expected"], [
         [PING_WINDOWS_INVALID, EmptyPingStaticticsError],
     ])
-    def test_exception(self, ping_parser, ping_text, expected):
+    def test_windows_exception(self, ping_parser, ping_text, expected):
         with pytest.raises(expected):
+          with patch('platform.system', MagicMock(return_value="Windows")):
             ping_parser.parse(ping_text)

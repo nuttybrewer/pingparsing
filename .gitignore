@@ -64,3 +64,8 @@ readme_converter.py
 README_HEADER.rst
 upgrade.sh
 sandbox/
+
+# Eclipse
+.project
+.pydevproject
+.settings
